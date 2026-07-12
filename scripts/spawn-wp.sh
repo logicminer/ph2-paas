@@ -52,7 +52,7 @@ echo "  Spawning WordPress: ${TLD}"
 echo "══════════════════════════════════════════════════════════"
 
 # ─── Step 1: DNS CNAMEs ──────────────────────────────────────────────────────
-log "Step 1/7: Creating DNS CNAMEs → tunnel"
+log "Step 1/8: Creating DNS CNAMEs → tunnel"
 
 ZONE_ID=""
 ZONE_NAME=""
@@ -83,14 +83,14 @@ done
 ok "DNS records in zone ${ZONE_NAME}"
 
 # ─── Step 2: MariaDB database + user ─────────────────────────────────────────
-log "Step 2/7: Creating MariaDB database + user"
+log "Step 2/8: Creating MariaDB database + user"
 
 docker exec "$MARIADB_CONTAINER" mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" \
   -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_PW'; GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'%'; FLUSH PRIVILEGES;" 2>&1 | grep -v 'Warning' || true
 ok "DB: ${DB_NAME}, user: ${DB_USER}"
 
 # ─── Step 3: OLS vhost ───────────────────────────────────────────────────────
-log "Step 3/7: Creating OLS vhost for ${TLD}"
+log "Step 3/8: Creating OLS vhost for ${TLD}"
 
 bash -c "cd /opt/ols && ./bin/domain.sh -a ${TLD}" 2>&1 | tail -2 || true
 SITE_DOCROOT="${WP_SITES_DIR}/${TLD}/html"
@@ -123,13 +123,13 @@ sleep 3
 ok "OLS vhost: ${TLD}"
 
 # ─── Step 4: WordPress core files ────────────────────────────────────────────
-log "Step 4/7: Downloading WordPress core"
+log "Step 4/8: Downloading WordPress core"
 
 docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" core download 2>&1 | tail -2
 ok "WP core downloaded"
 
 # ─── Step 5: wp-config.php + install ─────────────────────────────────────────
-log "Step 5/7: Configuring + installing WordPress"
+log "Step 5/8: Configuring + installing WordPress"
 
 TMP_PHP="$(mktemp)"
 cat > "$TMP_PHP" <<PHP
@@ -153,13 +153,26 @@ docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" c
 ok "WP installed → https://${TLD}/wp-admin"
 
 # ─── Step 6: LSCache plugin ──────────────────────────────────────────────────
-log "Step 6/7: Enabling LSCache"
+log "Step 6/8: Enabling LSCache"
 
 docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" plugin install litespeed-cache --activate 2>&1 | tail -2
 ok "LSCache enabled"
 
-# ─── Step 7: Dokku Nginx proxy route ─────────────────────────────────────────
-log "Step 7/7: Adding Nginx proxy route ${TLD} → ${OLS_CONTAINER}:8088"
+# ─── Step 7: Redis object cache ──────────────────────────────────────────────
+log "Step 7/8: Enabling Redis object cache"
+
+# Set Redis constants in wp-config.php
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" config set WP_REDIS_HOST redis --type=constant 2>&1 | tail -1
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" config set WP_REDIS_PORT 6379 --type=constant 2>&1 | tail -1
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" config set WP_REDIS_DATABASE 0 --type=constant 2>&1 | tail -1
+
+# Install + activate + enable the object cache drop-in
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" plugin install redis-cache --activate 2>&1 | tail -2
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" redis enable 2>&1 | tail -1
+ok "Redis object cache enabled (db 0)"
+
+# ─── Step 8: Dokku Nginx proxy route ─────────────────────────────────────────
+log "Step 8/8: Adding Nginx proxy route ${TLD} → ${OLS_CONTAINER}:8088"
 
 SAFE_CONF="$(echo "$TLD" | tr '.' '_')"
 cat > "${NGINX_WP_DIR}/${SAFE_CONF}.conf" <<NGINXEOF

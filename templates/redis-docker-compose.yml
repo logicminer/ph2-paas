@@ -1,0 +1,25 @@
+version: "3.8"
+# Redis — shared cache for WordPress (object cache) and Node.js apps.
+# WP uses db 0, Node apps use db 1+. Isolated by database number.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      wp-tier:
+        aliases:
+          - redis
+
+volumes:
+  redis_data:
+
+networks:
+  wp-tier:
+    external: true
+    name: ${WP_NETWORK:-wp-tier}

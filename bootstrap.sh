@@ -67,7 +67,7 @@ echo "  Panel: ${PANEL_DOMAIN}, Portainer: ${PORTAINER_DOMAIN}"
 echo "══════════════════════════════════════════════════════════"
 
 # ─── Step 1: Generate /etc/ph2/env (shared config) ───────────────────────────
-log "Step 1/17: Writing /etc/ph2/env"
+log "Step 1/18: Writing /etc/ph2/env"
 mkdir -p /etc/ph2
 cat > /etc/ph2/env <<PH2ENV
 # PH2 PaaS shared config — generated $(date)
@@ -96,7 +96,7 @@ chmod 600 /etc/ph2/env
 ok "/etc/ph2/env written (mode 600)"
 
 # ─── Step 2: System packages ─────────────────────────────────────────────────
-log "Step 2/17: Installing system packages"
+log "Step 2/18: Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl git python3 openssh-server zram-tools 2>&1 | tail -3
@@ -115,7 +115,7 @@ systemctl enable --now docker ssh
 ok "System packages installed"
 
 # ─── Step 3: Memory tier (zram + swap) ───────────────────────────────────────
-log "Step 3/17: Configuring memory tier (zram ${ZRAM_SIZE_MB}MB + swap ${SWAP_SIZE_MB}MB)"
+log "Step 3/18: Configuring memory tier (zram ${ZRAM_SIZE_MB}MB + swap ${SWAP_SIZE_MB}MB)"
 # zram config
 cat > /etc/default/zramswap <<ZRAMCONF
 ALGO=lz4
@@ -140,7 +140,7 @@ sysctl vm.swappiness=10 2>/dev/null || true
 ok "Memory tier: RAM → zram (pri 100) → swap (pri 10)"
 
 # ─── Step 4: Install Dokku ───────────────────────────────────────────────────
-log "Step 4/17: Installing Dokku"
+log "Step 4/18: Installing Dokku"
 if ! command -v dokku &>/dev/null; then
   wget -qO- https://raw.githubusercontent.com/dokku/dokku/v0.35.17/bootstrap.sh | DOKKU_TAG=v0.35.17 bash 2>&1 | tail -5
 fi
@@ -155,12 +155,12 @@ cat /root/.ssh/admin_deploy.pub | dokku ssh-keys:add admin 2>/dev/null || true
 ok "Dokku installed, global domain: ${DOKKU_GLOBAL_DOMAIN}"
 
 # ─── Step 5: Docker network ──────────────────────────────────────────────────
-log "Step 5/17: Creating ${WP_NETWORK} Docker network"
+log "Step 5/18: Creating ${WP_NETWORK} Docker network"
 docker network create "$WP_NETWORK" 2>/dev/null || true
 ok "Network ready"
 
 # ─── Step 6: MariaDB ─────────────────────────────────────────────────────────
-log "Step 6/17: Deploying MariaDB"
+log "Step 6/18: Deploying MariaDB"
 mkdir -p /opt/ph2/mariadb
 # Render compose from template
 sed -e "s|\${MARIADB_CONTAINER}|${MARIADB_CONTAINER}|g" \
@@ -171,8 +171,16 @@ cd /opt/ph2/mariadb && docker compose up -d 2>&1 | tail -3
 sleep 10
 ok "MariaDB: ${MARIADB_CONTAINER} on ${WP_NETWORK}"
 
-# ─── Step 7: OpenLiteSpeed ───────────────────────────────────────────────────
-log "Step 7/17: Deploying OpenLiteSpeed"
+# ─── Step 7: Redis ───────────────────────────────────────────────────────────
+log "Step 7/18: Deploying Redis"
+mkdir -p /opt/ph2/redis
+cp "${REPO_DIR}/templates/redis-docker-compose.yml" /opt/ph2/redis/docker-compose.yml
+sed -i "s|\${WP_NETWORK}|${WP_NETWORK}|g" /opt/ph2/redis/docker-compose.yml
+cd /opt/ph2/redis && docker compose up -d 2>&1 | tail -3
+ok "Redis: cache for WP (db 0) + Node apps (db 1+)"
+
+# ─── Step 8: OpenLiteSpeed ───────────────────────────────────────────────────
+log "Step 8/18: Deploying OpenLiteSpeed"
 if [[ ! -d /opt/ols ]]; then
   git clone --depth=1 https://github.com/litespeedtech/ols-docker-env.git /opt/ols 2>&1 | tail -2
 fi
@@ -197,7 +205,7 @@ sleep 8
 ok "OLS: ${OLS_CONTAINER} on port 127.0.0.1:8088"
 
 # ─── Step 8: Cloudflared ─────────────────────────────────────────────────────
-log "Step 8/17: Installing cloudflared"
+log "Step 9/18: Installing cloudflared"
 if ! command -v cloudflared &>/dev/null; then
   curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
   echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" > /etc/apt/sources.list.d/cloudflared.list
@@ -206,7 +214,7 @@ fi
 ok "cloudflared installed"
 
 # ─── Step 9: Create tunnel + start service ───────────────────────────────────
-log "Step 9/17: Creating Cloudflare tunnel"
+log "Step 10/18: Creating Cloudflare tunnel"
 TUNNEL_SECRET=$(head -c 32 /dev/urandom | base64)
 TUNNEL_RESP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel" \
   -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
@@ -251,7 +259,7 @@ sleep 10
 ok "Tunnel: ${TUNNEL_ID} (host: ${TUNNEL_HOST})"
 
 # ─── Step 10: Nginx gateway ──────────────────────────────────────────────────
-log "Step 10/17: Configuring Nginx WP gateway"
+log "Step 11/18: Configuring Nginx WP gateway"
 mkdir -p /etc/nginx/wp-domains
 cp "${REPO_DIR}/templates/wp-proxy.conf" /etc/nginx/conf.d/wp-proxy.conf
 # Ensure server_names_hash_bucket_size is set (needed for many long domains)
@@ -260,7 +268,7 @@ nginx -t 2>&1 | tail -1 && systemctl reload nginx 2>/dev/null || true
 ok "Nginx gateway ready"
 
 # ─── Step 11: Sudoers ────────────────────────────────────────────────────────
-log "Step 11/17: Installing sudoers entry"
+log "Step 12/18: Installing sudoers entry"
 sed -e "s|__USER__|${SUDO_USER}|g" \
     -e "s|__SCRIPTS_DIR__|${SCRIPTS_DIR}|g" \
     "${REPO_DIR}/templates/sudoers-ph2" > /etc/sudoers.d/ph2
@@ -269,7 +277,7 @@ visudo -cf /etc/sudoers.d/ph2
 ok "Sudoers: ${SUDO_USER} can run scripts passwordless"
 
 # ─── Step 12: Install scripts ────────────────────────────────────────────────
-log "Step 12/17: Installing operational scripts"
+log "Step 13/18: Installing operational scripts"
 mkdir -p "$SCRIPTS_DIR"
 for script in spawn-wp.sh destroy-wp.sh backup.sh restore.sh; do
   cp "${REPO_DIR}/scripts/${script}" "${SCRIPTS_DIR}/${script}"
@@ -278,7 +286,7 @@ done
 ok "Scripts installed to ${SCRIPTS_DIR}"
 
 # ─── Step 13: Portainer ──────────────────────────────────────────────────────
-log "Step 13/17: Deploying Portainer"
+log "Step 14/18: Deploying Portainer"
 docker run -d --name portainer --restart=always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v portainer_data:/data \
@@ -287,7 +295,7 @@ docker run -d --name portainer --restart=always \
 ok "Portainer on 127.0.0.1:9443"
 
 # ─── Step 14: Panel ──────────────────────────────────────────────────────────
-log "Step 14/17: Deploying control panel"
+log "Step 15/18: Deploying control panel"
 dokku apps:create panel 2>/dev/null || true
 dokku domains:add panel "$PANEL_DOMAIN" 2>/dev/null || true
 mkdir -p /var/lib/dokku/data/panel-data
@@ -318,7 +326,7 @@ GIT_SSH_COMMAND="ssh -i /root/.ssh/admin_deploy -o StrictHostKeyChecking=no -o U
 ok "Panel deployed → ${PANEL_DOMAIN}"
 
 # ─── Step 15: DNS CNAMEs ─────────────────────────────────────────────────────
-log "Step 15/17: Creating DNS CNAMEs for panel + portainer"
+log "Step 16/18: Creating DNS CNAMEs for panel + portainer"
 
 create_cname() {
   local SUBDOMAIN="$1" ZONE_DOMAIN="$2"
@@ -347,7 +355,7 @@ create_cname "$PORTAINER_DOMAIN" "$PT_ZONE" || true
 ok "DNS CNAMEs created"
 
 # ─── Step 16: Cloudflare Access policies ─────────────────────────────────────
-log "Step 16/17: Creating Cloudflare Access policies"
+log "Step 17/18: Creating Cloudflare Access policies"
 
 create_access() {
   local APP_DOMAIN="$1" APP_NAME="$2"
@@ -370,7 +378,7 @@ create_access "$PORTAINER_DOMAIN" "PH2 Portainer" || true
 ok "Access policies created (email OTP → ${ACCESS_ADMIN_EMAIL})"
 
 # ─── Step 17: Backup cron ────────────────────────────────────────────────────
-log "Step 17/17: Setting up backup cron"
+log "Step 18/18: Setting up backup cron"
 sed "s|__SCRIPTS_DIR__|${SCRIPTS_DIR}|g" "${REPO_DIR}/templates/cron-ph2-backup" > /etc/cron.d/ph2-backup
 chmod 0644 /etc/cron.d/ph2-backup
 mkdir -p "$BACKUP_DIR"
