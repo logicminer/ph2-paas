@@ -1,0 +1,6 @@
+# ZRAM swap configuration — primary tier (priority 100, used before disk swap).
+# SIZE and PRIORITY are substituted by bootstrap.sh based on installed RAM.
+# Generated from /etc/ph2/env
+ALGO=lz4
+SIZE=__ZRAM_SIZE_MB__
+PRIORITY=100

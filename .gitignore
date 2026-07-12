@@ -1,0 +1,17 @@
+# Secrets — NEVER commit these
+.env
+*.env
+credentials.json
+*.db
+*.db-wal
+*.db-shm
+
+# Runtime data
+panel/data/
+panel/node_modules/
+panel/.next/
+
+# OS noise
+.DS_Store
+*.swp
+*~

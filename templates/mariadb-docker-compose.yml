@@ -1,0 +1,28 @@
+version: "3.8"
+# MariaDB — shared across all WordPress sites
+# One instance, per-site logical databases. Memory-capped, no swap (protect InnoDB buffer pool).
+# Deployed by bootstrap.sh after creating the wp-tier network.
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: ${MARIADB_CONTAINER:-mariadb}
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      wp-tier:
+        aliases:
+          - mariadb
+    mem_limit: 1g
+    memswap_limit: 1g
+    command: ["--max-allowed-packet=512M"]
+
+volumes:
+  mariadb_data:
+
+networks:
+  wp-tier:
+    external: true
+    name: ${WP_NETWORK:-wp-tier}
