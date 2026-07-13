@@ -74,13 +74,44 @@ else
 fi
 
 for REC in "${RECORD_NAMES[@]}"; do
-  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+  RESP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
     -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
     -H "Content-Type: application/json" \
-    --data "$(python3 -c "import json; print(json.dumps({'type':'CNAME','name':'$REC','content':'$TUNNEL_HOST','proxied':True,'comment':'WP site via spawn-wp.sh'}))")" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print('  ${REC}: OK' if d.get('success') else '  ${REC}: ' + str(d.get('errors')))"
+    --data "$(python3 -c "import json; print(json.dumps({'type':'CNAME','name':'$REC','content':'$TUNNEL_HOST','proxied':True,'comment':'WP site via spawn-wp.sh'}))")")
+
+  # Check for "record already exists" error (code 81053) — attempt to replace it
+  ERR_CODE=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); e=d.get('errors',[]); print(e[0].get('code','') if e else '')" 2>/dev/null)
+  if [[ "$ERR_CODE" == "81053" ]]; then
+    # Find and delete the existing record, then retry
+    EXISTING_ID=$(curl -s "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?name=${TLD}" \
+      -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
+      | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('result',[]); print(r[0]['id'] if r else '')" 2>/dev/null)
+    if [[ -n "$EXISTING_ID" ]]; then
+      curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${EXISTING_ID}" \
+        -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" > /dev/null
+      # Retry creating the CNAME
+      curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+        -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "$(python3 -c "import json; print(json.dumps({'type':'CNAME','name':'$REC','content':'$TUNNEL_HOST','proxied':True,'comment':'WP site via spawn-wp.sh (replaced existing record)'}))")" \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); print('  ${REC}: OK (replaced existing record)' if d.get('success') else '  ${REC}: ' + str(d.get('errors')))"
+    else
+      echo "  ${REC}: record exists but could not find it to replace"
+    fi
+  else
+    echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print('  ${REC}: OK' if d.get('success') else '  ${REC}: ' + str(d.get('errors')))"
+  fi
 done
-ok "DNS records in zone ${ZONE_NAME}"
+
+# Purge Cloudflare edge cache for this zone (prevents stale content after DNS change).
+# See docs/FITRAH-ROUTING-FIX.md for why this matters.
+curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
+  -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"purge_everything":true}' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('  cache purge: OK' if d.get('success') else '  cache purge: skipped (token may lack Cache Purge permission — purge manually if domain had prior content)')" 2>/dev/null || echo "  cache purge: skipped"
+
+ok "DNS records + cache purge in zone ${ZONE_NAME}"
 
 # ─── Step 2: MariaDB database + user ─────────────────────────────────────────
 log "Step 2/8: Creating MariaDB database + user"

@@ -116,3 +116,21 @@ cat /root/.ssh/admin_deploy.pub | dokku ssh-keys:add admin
 - [ ] Test WP site spawned and accessible
 - [ ] Backup runs successfully (check `/data/backups/`)
 - [ ] Cloudflare Access email received (check OTP flow)
+
+## Post-spawn verification (for domain takeovers)
+
+When spawning a WP site on a domain that previously had different content, verify origin and public match:
+
+```bash
+# Origin check (bypasses CF edge cache)
+curl -s -H "Host: <domain>" "http://127.0.0.1:80/?nocache=$(date +%s)" | grep -o '<title>[^<]*</title>'
+
+# Public check
+curl -s "https://<domain>/?nocache=$(date +%s)" | grep -o '<title>[^<]*</title>'
+```
+
+If they differ, Cloudflare's edge cache is stale. `spawn-wp.sh` attempts to purge automatically, but if the API token lacks `Zone → Cache Purge → Edit` permission, purge manually:
+
+**Cloudflare Dashboard → zone → Caching → Configuration → Purge Everything**
+
+See `docs/FITRAH-ROUTING-FIX.md` for the full incident report.
