@@ -183,6 +183,31 @@ docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" c
   --admin_email="$ADMIN_EMAIL" 2>&1 | tail -2
 ok "WP installed → https://${TLD}/wp-admin"
 
+# Install SSL fix mu-plugin (enables app passwords + correct URLs behind CF tunnel)
+# TLS terminates at Cloudflare; OLS serves HTTP. WP needs to know it's behind HTTPS.
+docker exec "$OLS_CONTAINER" bash -c "mkdir -p /var/www/vhosts/${TLD}/html/wp-content/mu-plugins && cat > /var/www/vhosts/${TLD}/html/wp-content/mu-plugins/fix-ssl.php <<'SSLEOF'
+<?php
+if (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && strpos(\$_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false) {
+    \$_SERVER['HTTPS'] = 'on';
+}
+SSLEOF
+chown nobody:nogroup /var/www/vhosts/${TLD}/html/wp-content/mu-plugins/fix-ssl.php"
+
+# Enable pretty permalinks + create .htaccess for OLS rewrite
+docker exec -u nobody "$OLS_CONTAINER" wp --path="/var/www/vhosts/${TLD}/html" rewrite structure '/%postname%/' 2>&1 | tail -1
+docker exec "$OLS_CONTAINER" bash -c "cat > /var/www/vhosts/${TLD}/html/.htaccess <<'HTEOF'
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteBase /
+RewriteRule ^index\.php\$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+HTEOF
+chown nobody:nogroup /var/www/vhosts/${TLD}/html/.htaccess"
+
 # ─── Step 6: LSCache plugin ──────────────────────────────────────────────────
 log "Step 6/8: Enabling LSCache"
 
